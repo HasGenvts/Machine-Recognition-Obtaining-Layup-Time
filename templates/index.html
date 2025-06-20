@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>篮球进球检测系统</title>
+    <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.2.3/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+            cursor: pointer;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+        }
+        .clip-container {
+            margin: 20px 0;
+        }
+        .progress {
+            margin: 20px 0;
+            height: 25px;
+        }
+        .progress-bar {
+            transition: width 0.5s ease;
+        }
+        #status-message {
+            margin: 10px 0;
+        }
+        .progress-info {
+            font-size: 14px;
+            color: #666;
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="text-center mb-4">篮球进球检测系统</h1>
+        
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="upload-area" id="upload-area">
+                    <h3>点击或拖拽上传视频</h3>
+                    <p class="text-muted">支持mp4、avi、mov、mkv格式</p>
+                    <input type="file" id="file-input" accept="video/*" style="display: none;">
+                </div>
+                
+                <div id="progress-container" style="display: none;">
+                    <div class="progress">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" style="width: 0%">0%</div>
+                    </div>
+                    <div class="progress-info text-center">
+                        <span id="frame-info">已处理 0/0 帧</span>
+                    </div>
+                </div>
+                
+                <div id="status-message" class="alert" style="display: none;"></div>
+                
+                <div id="results" class="clip-container">
+                    <!-- 检测结果将在这里显示 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.bootcdn.net/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script>
+        let currentTaskId = null;
+        let statusCheckInterval = null;
+
+        // 上传区域点击事件
+        document.getElementById('upload-area').addEventListener('click', () => {
+            document.getElementById('file-input').click();
+        });
+
+        // 文件选择事件
+        document.getElementById('file-input').addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                uploadVideo(e.target.files[0]);
+            }
+        });
+
+        // 拖拽事件
+        const uploadArea = document.getElementById('upload-area');
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.style.borderColor = '#007bff';
+        });
+
+        uploadArea.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            uploadArea.style.borderColor = '#ccc';
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.style.borderColor = '#ccc';
+            if (e.dataTransfer.files.length > 0) {
+                uploadVideo(e.dataTransfer.files[0]);
+            }
+        });
+
+        // 上传视频
+        function uploadVideo(file) {
+            // 清除之前的状态和结果
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+            }
+            currentTaskId = null;
+            
+            const formData = new FormData();
+            formData.append('video', file);
+
+            // 清空并显示进度条
+            document.getElementById('progress-container').style.display = 'block';
+            document.getElementById('status-message').style.display = 'none';
+            document.getElementById('results').innerHTML = '';
+
+            // 重置进度条和帧信息
+            const progressBar = document.querySelector('.progress-bar');
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+            document.getElementById('frame-info').textContent = '已处理 0/0 帧';
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.task_id) {
+                    currentTaskId = data.task_id;
+                    startStatusCheck();
+                    showMessage('info', '视频上传成功，正在处理...');
+                } else {
+                    showMessage('danger', data.error || '上传失败');
+                    hideProgress();
+                }
+            })
+            .catch(error => {
+                showMessage('danger', '上传出错: ' + error);
+                hideProgress();
+            });
+        }
+
+        // 开始检查状态
+        function startStatusCheck() {
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+            }
+            statusCheckInterval = setInterval(checkStatus, 1000);
+        }
+
+        // 检查处理状态
+        function checkStatus() {
+            if (!currentTaskId) return;
+
+            fetch(`/status/${currentTaskId}`)
+            .then(response => response.json())
+            .then(data => {
+                console.log("状态更新:", data);  // 添加调试信息
+                
+                // 更新进度
+                if (data.progress !== undefined) {
+                    updateProgress(data.progress, data.frame_count, data.total_frames);
+                }
+
+                if (data.status === 'completed') {
+                    clearInterval(statusCheckInterval);
+                    hideProgress();
+                    showMessage('success', data.message);
+                    if (data.clips && data.clips.length > 0) {
+                        console.log("发现进球片段:", data.clips);  // 添加调试信息
+                        displayResults(data.clips);
+                    } else {
+                        console.log("没有进球片段");  // 添加调试信息
+                        document.getElementById('results').innerHTML = '<div class="alert alert-info">没有检测到进球时刻</div>';
+                    }
+                } else if (data.status === 'error') {
+                    clearInterval(statusCheckInterval);
+                    hideProgress();
+                    showMessage('danger', data.message);
+                }
+            })
+            .catch(error => {
+                console.error("状态检查错误:", error);  // 添加调试信息
+                clearInterval(statusCheckInterval);
+                hideProgress();
+                showMessage('danger', '检查状态出错: ' + error);
+            });
+        }
+
+        // 更新进度条
+        function updateProgress(progress, frameCount, totalFrames) {
+            const progressBar = document.querySelector('.progress-bar');
+            progressBar.style.width = `${progress}%`;
+            progressBar.textContent = `${progress.toFixed(1)}%`;
+            
+            // 更新帧信息
+            const frameInfo = document.getElementById('frame-info');
+            frameInfo.textContent = `已处理 ${frameCount}/${totalFrames} 帧`;
+        }
+
+        // 隐藏进度条
+        function hideProgress() {
+            document.getElementById('progress-container').style.display = 'none';
+        }
+
+        // 显示消息
+        function showMessage(type, message) {
+            const statusDiv = document.getElementById('status-message');
+            statusDiv.className = `alert alert-${type}`;
+            statusDiv.textContent = message;
+            statusDiv.style.display = 'block';
+        }
+
+        // 显示结果
+        function displayResults(clips) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '';
+
+            if (clips && clips.length > 0) {
+                clips.forEach((clip, index) => {
+                    const clipElement = document.createElement('div');
+                    clipElement.className = 'card mb-3';
+                    clipElement.innerHTML = `
+                        <div class="card-body">
+                            <h5 class="card-title">进球时刻 ${index + 1}</h5>
+                            <p class="card-text">帧号: ${clip.frame}</p>
+                            <video class="w-100" controls>
+                                <source src="/static/${clip.clip_path}" type="video/mp4">
+                                您的浏览器不支持视频播放
+                            </video>
+                        </div>
+                    `;
+                    resultsDiv.appendChild(clipElement);
+                });
+                
+                // 添加调试信息
+                console.log("显示结果:", clips);
+            } else {
+                resultsDiv.innerHTML = '<div class="alert alert-info">没有检测到进球时刻</div>';
+                console.log("没有检测到进球时刻");
+            }
+        }
+    </script>
+</body>
+</html> 

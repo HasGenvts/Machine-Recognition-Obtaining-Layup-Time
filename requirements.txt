@@ -1,0 +1,13 @@
+# Web框架
+Flask==2.0.1
+
+# 视频处理
+opencv-python==4.8.0.74
+numpy==1.24.3
+
+# 目标检测
+ultralytics==8.0.196
+
+# 其他工具
+python-dotenv==1.0.0
+Werkzeug==2.2.3 
